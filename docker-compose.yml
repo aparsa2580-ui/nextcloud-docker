@@ -91,7 +91,22 @@ services:
       - ./phpmyadmin/sessions:/sessions
       - ./phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php:ro
     # Don't expose any ports - only accessible through nginx
-
+  collabora:
+    image: collabora/code:latest
+    container_name: collabora
+    restart: unless-stopped
+    ports:
+      - "9980:9980"
+    environment:
+      - domain=your\\.nextcloud\\.com
+      - username=admin
+      - password=${COLLABORA_PASSWORD}
+      - extra_params=--o:ssl.enable=false --o:ssl.termination=true
+      - DONT_GEN_SSL_CERT=true
+    networks:
+      - nextcloud_backend
+    cap_add:
+      - MKNOD
   # Nginx Reverse Proxy
   nginx:
     image: nginx:1.24-alpine
