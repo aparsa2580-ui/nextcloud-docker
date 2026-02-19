@@ -1,0 +1,115 @@
+version: '3.8'
+
+# Networks - isolated backend, exposed frontend only for nginx
+networks:
+  backend:
+    name: ${BACKEND_NETWORK}
+    internal: true  # Makes this network inaccessible from host
+  frontend:
+    name: ${FRONTEND_NETWORK}
+    driver: bridge
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: ${COMPOSE_PROJECT_NAME}_mysql
+    restart: unless-stopped
+    command: 
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=512M
+      - --innodb-log-file-size=256M
+    networks:
+      - backend
+    volumes:
+      - ./mysql/data:${MYSQL_DATA}
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_INITDB_SKIP_TZINFO=${MYSQL_INITDB_SKIP_TZINFO}
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Nextcloud Application
+  nextcloud:
+    image: nextcloud:27-apache
+    container_name: ${COMPOSE_PROJECT_NAME}_app
+    restart: unless-stopped
+    networks:
+      - backend
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./nextcloud/config:/var/www/html/config
+      - ./nextcloud/data:${NEXTCLOUD_DATA_DIR}
+      - ./nextcloud/apps:/var/www/html/apps
+      - ./nextcloud/themes:/var/www/html/themes
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
+      - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
+    env_file:
+      - .env
+
+  # phpMyAdmin
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: ${COMPOSE_PROJECT_NAME}_phpmyadmin
+    restart: unless-stopped
+    networks:
+      - backend
+    depends_on:
+      - mysql
+    environment:
+      - PMA_HOST=${PMA_HOST}
+      - PMA_PORT=${PMA_PORT}
+      - PMA_USER=${PMA_USER}
+      - PMA_PASSWORD=${PMA_PASSWORD}
+      - PMA_ABSOLUTE_URI=${PMA_ABSOLUTE_URI}
+      - PMA_ARBITRARY=${PMA_ARBITRARY}
+      - UPLOAD_LIMIT=${UPLOAD_LIMIT}
+      - MAX_EXECUTION_TIME=300
+    env_file:
+      - .env
+    volumes:
+      - ./phpmyadmin/sessions:/sessions
+      - ./phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php:ro
+    # Don't expose any ports - only accessible through nginx
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.24-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}_proxy
+    restart: unless-stopped
+    networks:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - nextcloud
+      - phpmyadmin
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/logs:/var/log/nginx
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    env_file:
+      - .env
